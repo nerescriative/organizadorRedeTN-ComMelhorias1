@@ -37,6 +37,7 @@ require_once __DIR__ . '/includes/header.php';
 $postes   = $db->fetchAll("SELECT id, codigo, lat, lng, tipo, status FROM postes WHERE lat IS NOT NULL");
 $ceos     = $db->fetchAll("SELECT id, codigo, nome, lat, lng, tipo, status, capacidade_fo FROM ceos WHERE lat IS NOT NULL");
 $ctos     = $db->fetchAll("SELECT c.id, c.codigo, c.nome, c.lat, c.lng, c.tipo, c.status, c.capacidade_portas,
+    c.olt_pon_id,
     (SELECT COUNT(*) FROM clientes cl WHERE cl.cto_id = c.id AND cl.status='ativo') as clientes_ativos,
     op.slot as pon_slot, op.numero_pon as pon_numero,
     o.nome as pon_olt_nome, o.codigo as pon_olt_codigo
@@ -44,6 +45,22 @@ $ctos     = $db->fetchAll("SELECT c.id, c.codigo, c.nome, c.lat, c.lng, c.tipo, 
     LEFT JOIN olt_pons op ON op.id = c.olt_pon_id
     LEFT JOIN olts o ON o.id = op.olt_id
     WHERE c.lat IS NOT NULL");
+
+// Montar opções de filtro PON agrupadas por OLT → Slot/PON
+$ponOptions = [];
+foreach ($ctos as $cto) {
+    if (!$cto['olt_pon_id']) continue;
+    $key = (int)$cto['olt_pon_id'];
+    if (!isset($ponOptions[$key])) {
+        $ponOptions[$key] = [
+            'id'    => $key,
+            'label' => ($cto['pon_olt_nome'] ?? 'OLT') . ' — Slot ' . $cto['pon_slot'] . ' / PON ' . $cto['pon_numero'],
+            'count' => 0,
+        ];
+    }
+    $ponOptions[$key]['count']++;
+}
+usort($ponOptions, fn($a,$b) => strcmp($a['label'], $b['label']));
 $racks    = $db->fetchAll("SELECT r.id, r.codigo, r.nome, r.lat, r.lng, r.status, r.localizacao, COUNT(o.id) as total_olts FROM racks r LEFT JOIN olts o ON o.rack_id = r.id WHERE r.lat IS NOT NULL GROUP BY r.id ORDER BY r.codigo ASC");
 $clientes = $db->fetchAll("SELECT id, nome, login, lat, lng, status, serial_onu, cto_id, porta_cto FROM clientes WHERE lat IS NOT NULL AND status != 'cancelado'");
 
@@ -84,8 +101,8 @@ $ctoPortasLivres = $ctoPortasTotal - $ctoPortasUsadas;
                 <i class="fas fa-chevron-down" id="layers-chevron"></i>
             </button>
             <div id="layers-body" style="display:none;margin-top:6px">
-            <label class="layer-item active" id="layer-postes">
-                <input type="checkbox" checked onchange="toggleLayer('postes', this.checked)">
+            <label class="layer-item" id="layer-postes">
+                <input type="checkbox" onchange="toggleLayer('postes', this.checked)">
                 <span class="layer-dot" style="background:#aaaaaa"></span>
                 <span class="layer-label">Postes</span>
             </label>
@@ -132,6 +149,36 @@ $ctoPortasLivres = $ctoPortasTotal - $ctoPortasUsadas;
             </label>
             </div><!-- /layers-body -->
         </div>
+
+        <!-- Filtro PON -->
+        <div class="map-layers-panel" id="pon-filter-panel" style="margin-top:6px">
+            <button class="layers-toggle" id="pon-filter-toggle-btn" onclick="togglePonFilterPanel()" title="Filtrar por Slot/PON">
+                <i class="fas fa-filter"></i>
+                <span>Filtro PON</span>
+                <span id="pon-filter-dot" style="display:none;width:7px;height:7px;background:#ffaa00;border-radius:50%;margin-left:auto;margin-right:4px"></span>
+                <i class="fas fa-chevron-down" id="pon-filter-chevron"></i>
+            </button>
+            <div id="pon-filter-body" style="display:none;margin-top:6px">
+                <?php if (empty($ponOptions)): ?>
+                <div style="color:#666;font-size:11px;padding:4px 2px">Nenhuma CTO com PON atribuída.</div>
+                <?php else: ?>
+                <select id="pon-filter-select"
+                        onchange="setPonFilter(this.value, this.options[this.selectedIndex].dataset.label)"
+                        style="width:100%;background:#0d1117;color:#ccc;border:1px solid #2a2f3a;border-radius:5px;padding:5px 7px;font-size:11px;cursor:pointer">
+                    <option value="" data-label="">— Mostrar todas as CTOs —</option>
+                    <?php foreach ($ponOptions as $opt): ?>
+                    <option value="<?= $opt['id'] ?>" data-label="<?= htmlspecialchars($opt['label']) ?>">
+                        <?= htmlspecialchars($opt['label']) ?> (<?= $opt['count'] ?> CTOs)
+                    </option>
+                    <?php endforeach; ?>
+                </select>
+                <button onclick="setPonFilter('','');document.getElementById('pon-filter-select').value=''"
+                        style="margin-top:5px;width:100%;background:rgba(255,100,100,.12);border:1px solid rgba(255,100,100,.25);color:#ff8888;border-radius:5px;padding:4px;font-size:11px;cursor:pointer">
+                    <i class="fas fa-times"></i> Limpar filtro
+                </button>
+                <?php endif; ?>
+            </div>
+        </div>
     </div>
 
     <!-- Toolbar -->
@@ -163,6 +210,10 @@ $ctoPortasLivres = $ctoPortasTotal - $ctoPortasUsadas;
         <div class="tool-btn" id="tool-move" onclick="toggleMoveMode()" title="">
             <i class="fas fa-arrows-alt"></i>
             <span class="tool-tooltip">Modo Mover (arrastar postes, caixas e pontos de cabo)</span>
+        </div>
+        <div class="tool-btn" id="tool-ruler" onclick="toggleRuler()" title="">
+            <i class="fas fa-ruler-horizontal"></i>
+            <span class="tool-tooltip">Régua (clique para medir distâncias)</span>
         </div>
         <div style="height:1px;background:var(--border);margin:4px 0"></div>
         <div class="tool-btn" onclick="goHome()" title="">
@@ -218,6 +269,11 @@ $ctoPortasLivres = $ctoPortasTotal - $ctoPortasUsadas;
         <div class="stat-card">
             <div class="num" style="color:#00ccff;font-size:18px"><?= count($clientes) ?></div>
             <div class="lbl">Clientes</div>
+        </div>
+        <div id="pon-filter-badge" style="display:none;align-items:center;gap:6px;background:rgba(255,170,0,.1);border:1px solid rgba(255,170,0,.3);border-radius:8px;padding:5px 10px;margin-left:4px">
+            <i class="fas fa-filter" style="color:#ffaa00;font-size:11px"></i>
+            <span id="pon-filter-badge-label" style="color:#ffaa00;font-size:11px;font-weight:600"></span>
+            <button onclick="setPonFilter('','');document.getElementById('pon-filter-select').value=''" style="background:none;border:none;color:#ff8888;cursor:pointer;padding:0;font-size:12px;margin-left:2px" title="Limpar filtro"><i class="fas fa-times"></i></button>
         </div>
     </div>
 

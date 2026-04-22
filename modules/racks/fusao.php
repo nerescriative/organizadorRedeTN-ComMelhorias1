@@ -108,6 +108,9 @@ $conexoesFibra = $db->fetchAll(
 $pageTitle  = 'Mapa de Conexões — ' . $rack['codigo'];
 $activePage = 'racks';
 $extraHead  = '<style>
+/* ── Context menu / route modal ── */
+.fiber-ctx-item{padding:7px 12px;font-size:12px;color:#c9d1d9;cursor:pointer;display:flex;align-items:center;gap:8px;border-radius:5px;white-space:nowrap}
+.fiber-ctx-item:hover{background:rgba(255,255,255,.06)}
 /* ── Canvas ── */
 #canvas-wrap{position:relative;overflow:auto;height:calc(100vh - 64px);background:#080b0f}
 #canvas{position:relative;min-width:100%;min-height:100%}
@@ -152,6 +155,17 @@ require_once __DIR__ . '/../../includes/header.php';
 <div id="canvas-wrap">
     <div id="canvas">
         <svg id="fsvg"></svg>
+    </div>
+</div>
+
+<!-- Route Modal (fiber trace from DIO map) -->
+<div id="rota-modal-dio" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9999;align-items:center;justify-content:center">
+    <div style="background:#0d1117;border:1px solid #30363d;border-radius:14px;width:min(96vw,860px);max-height:90vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,.6)">
+        <div style="padding:14px 18px;border-bottom:1px solid #21262d;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
+            <div style="font-size:14px;font-weight:700;color:#e6edf3"><i class="fas fa-route" style="color:#00cc66;margin-right:8px"></i>Rota da Fibra <span style="font-size:11px;color:#00cc66;font-weight:400">→ CTOs</span></div>
+            <button onclick="document.getElementById('rota-modal-dio').style.display='none'" style="background:none;border:none;color:#666;font-size:20px;cursor:pointer;padding:0 6px;line-height:1">&times;</button>
+        </div>
+        <div id="rota-content-dio" style="padding:16px;overflow-y:auto;flex:1;min-height:0"></div>
     </div>
 </div>
 

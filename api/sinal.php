@@ -12,7 +12,7 @@ function jresp(array $d): void { echo json_encode($d); exit; }
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const FIBER_ATTN  = 0.00025; // dBm/m  (0.25 dBm/km)
-const LOSS_EMENDA = 0.05;    // dBm per splice
+const LOSS_EMENDA = 0.10;    // dBm per splice
 const LOSS_PASS   = 0.00;    // dBm passthrough
 const PON_DEFAULT = 5.0;     // dBm default OLT TX
 
@@ -34,12 +34,17 @@ function caboLen($db, int $id): float {
 function splitterOutputSignal($db, int $splInstId, string $porta, int $depth): array {
     if ($depth > 40) return ['sinal'=>null,'aviso'=>'Rastreamento muito profundo','comprimento_m'=>0.0];
 
-    // Find what feeds this splitter's INPUT (cable or upstream splitter output)
+    // Find what feeds this splitter's INPUT (cable or upstream splitter output).
+    // Exclude reversed output connections (spl_sai_porta='o*') which should not be
+    // treated as input connections.
     $fin = $db->fetch(
         "SELECT cabo_entrada_id, fibra_entrada,
                 spl_ent_id AS up_spl_id, spl_ent_porta AS up_spl_porta,
                 perda_db AS perda_in
-         FROM fusoes WHERE spl_sai_id=? LIMIT 1",
+         FROM fusoes
+         WHERE spl_sai_id=?
+           AND (spl_sai_porta IS NULL OR spl_sai_porta NOT LIKE 'o%')
+         LIMIT 1",
         [$splInstId]
     );
     if (!$fin) return ['sinal'=>null,'aviso'=>'Entrada do splitter sem conexão','comprimento_m'=>0.0];
@@ -100,7 +105,7 @@ function splitterOutputSignal($db, int $splInstId, string $porta, int $depth): a
  * Returns ['sinal'=>float|null, 'aviso'=>string|null, 'comprimento_m'=>float].
  * comprimento_m = total fiber distance from OLT to start of this cable.
  */
-function traceStart($db, int $caboId, int $fibraNum, int $depth = 0): array {
+function traceStart($db, int $caboId, int $fibraNum, int $depth = 0, int $skipFusaoId = 0): array {
     if ($depth > 40) return ['sinal'=>null,'aviso'=>'Rastreamento muito profundo','comprimento_m'=>0.0];
 
     // ── Case A: cable connected to DIO (directly from OLT rack) ──────────────
@@ -117,43 +122,95 @@ function traceStart($db, int $caboId, int $fibraNum, int $depth = 0): array {
     }
 
     // ── Case B: cable arrived via fusão ──────────────────────────────────────
-    // Exclude only self-referential passante (same cable in=out). Cross-cable passante treated like emenda.
+    // Bidirectional: fusões can be stored in either drag direction.
+    //   is_reversed=0 → found via cabo_saida_id (cable is downstream, normal).
+    //   is_reversed=1 → found via cabo_entrada_id (cable stored as drag source,
+    //                   but may be physically downstream — reversed creation order).
+    //
+    // Priority ordering:
+    //   0 = normal splitter-output (spl_ent_id + cabo_saida_id=current) — most authoritative
+    //   1 = reversed splitter-output (spl_sai_id 'o*' + cabo_entrada_id=current)
+    //   2 = normal cable-to-cable (cabo_saida_id=current, no spl fields)
+    //   3 = reversed cable-to-cable (cabo_entrada_id=current, no spl fields)
+    $skipClause = $skipFusaoId ? "AND id != {$skipFusaoId}" : "";
     $f = $db->fetch(
-        "SELECT tipo, perda_db, cabo_entrada_id, fibra_entrada, spl_ent_id, spl_ent_porta
-         FROM fusoes WHERE cabo_saida_id=? AND fibra_saida=?
-           AND NOT (tipo='passante' AND cabo_entrada_id=cabo_saida_id) LIMIT 1",
-        [$caboId, $fibraNum]
+        "SELECT id, tipo, perda_db, cabo_entrada_id, fibra_entrada,
+                cabo_saida_id, fibra_saida, spl_ent_id, spl_ent_porta,
+                spl_sai_id, spl_sai_porta,
+                IF(cabo_saida_id=? AND fibra_saida=?, 0, 1) AS is_reversed
+         FROM fusoes
+         WHERE (
+             (cabo_saida_id=? AND fibra_saida=?)
+             OR (cabo_entrada_id=? AND fibra_entrada=?)
+         )
+         AND NOT (tipo='passante' AND cabo_entrada_id=cabo_saida_id)
+         {$skipClause}
+         ORDER BY
+           CASE
+             WHEN is_reversed=0 AND spl_ent_id IS NOT NULL THEN 0
+             WHEN is_reversed=1 AND spl_sai_id IS NOT NULL AND spl_sai_porta LIKE 'o%' THEN 1
+             WHEN is_reversed=0 THEN 2
+             ELSE 3
+           END ASC,
+           id ASC
+         LIMIT 1",
+        [$caboId, $fibraNum, $caboId, $fibraNum, $caboId, $fibraNum]
     );
     if (!$f) return ['sinal'=>null,'aviso'=>null,'comprimento_m'=>0.0];
 
-    // ── Case B1: source is a splitter output ─────────────────────────────────
+    $isReversed   = isset($f['is_reversed']) && (int)$f['is_reversed'] === 1;
+    $splSaiPorta  = $f['spl_sai_porta'] ?? '';
+
+    // ── Case B1: normal splitter output → current cable ──────────────────────
     if (!empty($f['spl_ent_id'])) {
-        // Delegate entirely to splitterOutputSignal which handles chained splitters
         return splitterOutputSignal($db, (int)$f['spl_ent_id'], $f['spl_ent_porta'] ?? 'o0', $depth+1);
     }
 
-    // ── Case B2: source is a cable (emenda / passante) ────────────────────────
-    if (empty($f['cabo_entrada_id'])) return ['sinal'=>null,'aviso'=>null,'comprimento_m'=>0.0];
+    // ── Case B1b: reversed splitter output (cable was drag-source to output port) ─
+    // User dragged FROM cable TO splitter output port → stored with spl_sai_id + spl_sai_porta='o*'.
+    // Physically: splitter output feeds the cable, so trace backward through the splitter.
+    if ($isReversed && !empty($f['spl_sai_id']) && strpos($splSaiPorta, 'o') === 0) {
+        return splitterOutputSignal($db, (int)$f['spl_sai_id'], $splSaiPorta, $depth+1);
+    }
 
-    $up = traceStart($db, (int)$f['cabo_entrada_id'], (int)$f['fibra_entrada'], $depth+1);
-    if ($up['sinal'] === null) return $up;
+    // ── Case B2: normal cable-to-cable ───────────────────────────────────────
+    if (!$isReversed) {
+        if (empty($f['cabo_entrada_id'])) return ['sinal'=>null,'aviso'=>null,'comprimento_m'=>0.0];
+        $up = traceStart($db, (int)$f['cabo_entrada_id'], (int)$f['fibra_entrada'], $depth+1);
+        if ($up['sinal'] === null) return $up;
+        $inLen = caboLen($db, (int)$f['cabo_entrada_id']);
+        $sigAfterCable = $up['sinal'] - $inLen * FIBER_ATTN;
+        $totalLen = $up['comprimento_m'] + $inLen;
+        $tipo = $f['tipo'];
+        $pdb  = $f['perda_db'];
+        $aviso = $up['aviso'];
+        if ($tipo === 'emenda')       $loss = $pdb !== null ? (float)$pdb : LOSS_EMENDA;
+        elseif ($tipo === 'passante') $loss = $pdb !== null ? (float)$pdb : LOSS_PASS;
+        elseif ($tipo === 'splitter') {
+            if ($pdb !== null) $loss = (float)$pdb;
+            else return ['sinal' => $sigAfterCable, 'aviso' => 'Splitter sem perda configurada — resultado parcial', 'comprimento_m' => $totalLen];
+        } else $loss = $pdb !== null ? (float)$pdb : 0.0;
+        return ['sinal' => $sigAfterCable - $loss, 'aviso' => $aviso, 'comprimento_m' => $totalLen];
+    }
 
-    $inLen = caboLen($db, (int)$f['cabo_entrada_id']);
-    $sigAfterCable = $up['sinal'] - $inLen * FIBER_ATTN;
-    $totalLen = $up['comprimento_m'] + $inLen;
+    // ── Case B3: reversed cable-to-cable ─────────────────────────────────────
+    // Current cable stored as cabo_entrada_id (drag source) but physically downstream.
+    // cabo_saida_id is the actual upstream cable. Pass skipFusaoId to prevent loop.
+    if (!empty($f['cabo_saida_id']) && empty($f['spl_sai_id'])) {
+        $up = traceStart($db, (int)$f['cabo_saida_id'], (int)$f['fibra_saida'], $depth+1, (int)$f['id']);
+        if ($up['sinal'] === null) return $up;
+        $inLen = caboLen($db, (int)$f['cabo_saida_id']);
+        $sigAfterCable = $up['sinal'] - $inLen * FIBER_ATTN;
+        $totalLen = $up['comprimento_m'] + $inLen;
+        $tipo = $f['tipo'];
+        $pdb  = $f['perda_db'];
+        if ($tipo === 'emenda')       $loss = $pdb !== null ? (float)$pdb : LOSS_EMENDA;
+        elseif ($tipo === 'passante') $loss = $pdb !== null ? (float)$pdb : LOSS_PASS;
+        else                          $loss = $pdb !== null ? (float)$pdb : 0.0;
+        return ['sinal' => $sigAfterCable - $loss, 'aviso' => $up['aviso'], 'comprimento_m' => $totalLen];
+    }
 
-    $tipo = $f['tipo'];
-    $pdb  = $f['perda_db'];
-    $aviso = $up['aviso'];
-
-    if ($tipo === 'emenda')   $loss = $pdb !== null ? (float)$pdb : LOSS_EMENDA;
-    elseif ($tipo === 'passante') $loss = $pdb !== null ? (float)$pdb : LOSS_PASS;
-    elseif ($tipo === 'splitter') {
-        if ($pdb !== null) $loss = (float)$pdb;
-        else return ['sinal' => $sigAfterCable, 'aviso' => 'Splitter sem perda configurada — resultado parcial', 'comprimento_m' => $totalLen];
-    } else $loss = $pdb !== null ? (float)$pdb : 0.0;
-
-    return ['sinal' => $sigAfterCable - $loss, 'aviso' => $aviso, 'comprimento_m' => $totalLen];
+    return ['sinal'=>null,'aviso'=>null,'comprimento_m'=>0.0];
 }
 
 /**

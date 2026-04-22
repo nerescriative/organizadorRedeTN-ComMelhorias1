@@ -231,9 +231,111 @@ function usarPosicaoAtual() {
     showToast('Posição atual do mapa carregada!', 'success');
 }
 
+// ── PON Filter ────────────────────────────────────────────────────────────────
+let ponFilter      = null; // { id: Number, label: String } | null
+let ponFilterCache = null; // { filteredCtoIds, visibleCaboIds, visibleCeoIds }
+
+// BFS pelo grafo de cabos: a partir das CTOs do filtro, percorre todos os cabos
+// e CEOs conectados (upstream/downstream) para descobrir o que deve ser visível.
+function _computePonFilterVisibility() {
+    if (!ponFilter) return null;
+
+    const filteredCtoIds = new Set(
+        ELEMENTS.ctos.filter(c => parseInt(c.olt_pon_id) === ponFilter.id).map(c => c.id)
+    );
+
+    // Mapa: "tipo:id" -> Set de caboIds que ancoram nesse elemento
+    const elemToCabos = new Map();
+    // Mapa: caboId -> lista de anchors [{type,id}]
+    const caboAnchors = new Map();
+
+    ELEMENTS.cabos.forEach(c => {
+        if (!c.pontos) return;
+        const pts = typeof c.pontos === 'string' ? JSON.parse(c.pontos) : c.pontos;
+        if (!pts || pts.length < 2) return;
+        const anchors = pts.filter(p => p.et).map(p => ({ type: p.et, id: parseInt(p.eid) }));
+        caboAnchors.set(c.id, anchors);
+        anchors.forEach(a => {
+            const key = `${a.type}:${a.id}`;
+            if (!elemToCabos.has(key)) elemToCabos.set(key, new Set());
+            elemToCabos.get(key).add(c.id);
+        });
+    });
+
+    // BFS a partir das CTOs filtradas
+    const visibleCaboIds = new Set();
+    const visibleCeoIds  = new Set();
+    const visited = new Set();
+    const queue   = [];
+
+    filteredCtoIds.forEach(id => {
+        const key = `cto:${id}`;
+        if (!visited.has(key)) { visited.add(key); queue.push({ type: 'cto', id }); }
+    });
+
+    while (queue.length > 0) {
+        const elem = queue.shift();
+        const cabos = elemToCabos.get(`${elem.type}:${elem.id}`);
+        if (!cabos) continue;
+        cabos.forEach(caboId => {
+            visibleCaboIds.add(caboId);
+            (caboAnchors.get(caboId) || []).forEach(a => {
+                const aKey = `${a.type}:${a.id}`;
+                if (!visited.has(aKey)) {
+                    visited.add(aKey);
+                    // Propagar apenas pelos CEOs (backbone da rede óptica)
+                    if (a.type === 'ceo') {
+                        visibleCeoIds.add(a.id);
+                        queue.push(a);
+                    }
+                }
+            });
+        });
+    }
+
+    return { filteredCtoIds, visibleCaboIds, visibleCeoIds };
+}
+
+function setPonFilter(id, label) {
+    if (!id) {
+        ponFilter      = null;
+        ponFilterCache = null;
+        const dot   = document.getElementById('pon-filter-dot');
+        const badge = document.getElementById('pon-filter-badge');
+        if (dot)   dot.style.display   = 'none';
+        if (badge) badge.style.display = 'none';
+    } else {
+        ponFilter      = { id: parseInt(id), label };
+        ponFilterCache = _computePonFilterVisibility();
+        const dot   = document.getElementById('pon-filter-dot');
+        const badge = document.getElementById('pon-filter-badge');
+        const lbl   = document.getElementById('pon-filter-badge-label');
+        if (dot)   dot.style.display   = 'inline-block';
+        if (badge) badge.style.display = 'flex';
+        if (lbl)   lbl.textContent     = label;
+    }
+    renderCeos();
+    renderCtos();
+    renderCabos();
+    renderDropLines();
+    renderClientes();
+}
+
+function togglePonFilterPanel() {
+    const body    = document.getElementById('pon-filter-body');
+    const chevron = document.getElementById('pon-filter-chevron');
+    const open    = body.style.display === 'none';
+    body.style.display      = open ? 'block' : 'none';
+    chevron.style.transform = open ? 'rotate(180deg)' : '';
+}
+
+function _filteredCtoIds()  { return ponFilterCache ? ponFilterCache.filteredCtoIds  : null; }
+function _visibleCaboIds()  { return ponFilterCache ? ponFilterCache.visibleCaboIds  : null; }
+function _visibleCeoIds()   { return ponFilterCache ? ponFilterCache.visibleCeoIds   : null; }
+
 // Layer groups
 const layers = {
-    postes:    L.layerGroup().addTo(map),
+    postes:    L.layerGroup(), // hidden by default; user enables via layer panel
     ceos:      L.layerGroup().addTo(map),
     ctos:      L.layerGroup().addTo(map),
     cabos:     L.layerGroup().addTo(map),
@@ -440,8 +542,10 @@ function renderAll() {
 
 function renderDropLines() {
     layers.drops.clearLayers();
+    const ctoFilterIds = _filteredCtoIds();
     ELEMENTS.clientes.forEach(cl => {
         if (!cl.cto_id || !cl.lat || !cl.lng) return;
+        if (ctoFilterIds && !ctoFilterIds.has(parseInt(cl.cto_id))) return;
         const cto = ELEMENTS.ctos.find(c => c.id == cl.cto_id);
         if (!cto || !cto.lat || !cto.lng) return;
         L.polyline([[cto.lat, cto.lng], [cl.lat, cl.lng]], {
@@ -499,7 +603,9 @@ function renderPostes() {
 
 function renderCeos() {
     layers.ceos.clearLayers();
+    const ceoFilterIds = _visibleCeoIds(); // null = sem filtro
     ELEMENTS.ceos.forEach(c => {
+        if (ceoFilterIds && !ceoFilterIds.has(c.id)) return;
         const mk = L.marker([c.lat, c.lng], { icon: iconCeo(c.status), draggable: moveMode });
         mk.addTo(layers.ceos);
         mk.on('click', function(e) {
@@ -532,7 +638,9 @@ function renderCeos() {
 
 function renderCtos() {
     layers.ctos.clearLayers();
+    const ctoFilterIds = _filteredCtoIds();
     ELEMENTS.ctos.forEach(c => {
+        if (ctoFilterIds && !ctoFilterIds.has(c.id)) return;
         const pct = c.capacidade_portas > 0 ? Math.round((c.clientes_ativos / c.capacidade_portas) * 100) : 0;
         const mk = L.marker([c.lat, c.lng], { icon: iconCto(pct, c.status), draggable: moveMode });
         mk.addTo(layers.ctos);
@@ -600,7 +708,9 @@ function renderRacks() {
 
 function renderClientes() {
     layers.clientes.clearLayers();
+    const ctoFilterIds = _filteredCtoIds();
     ELEMENTS.clientes.forEach(c => {
+        if (ctoFilterIds && (!c.cto_id || !ctoFilterIds.has(parseInt(c.cto_id)))) return;
         const mk = L.marker([c.lat, c.lng], { icon: iconCliente(c.status) })
             .addTo(layers.clientes)
             .on('click', () => showInfo('cliente', c));
@@ -702,7 +812,9 @@ function renderCabos() {
     clearVertexMarkers();
     _cablePolyMap.clear();
     const { offsets: caboOffsets, groupSize: caboGroupSize } = computeCaboOffsets(ELEMENTS.cabos);
+    const visibleCaboIds = _visibleCaboIds(); // null = sem filtro
     ELEMENTS.cabos.forEach(c => {
+        if (visibleCaboIds && !visibleCaboIds.has(c.id)) return;
         if (!c.pontos) return;
         const pts = typeof c.pontos === 'string' ? JSON.parse(c.pontos) : c.pontos;
         if (!pts || pts.length < 2) return;
@@ -1200,6 +1312,12 @@ let caboPolyline = null;
 let tempMarkers  = [];
 let drawingCabo  = false;
 
+// ---- Ruler state ----
+let rulerPoints   = [];
+let rulerPolyline = null;
+let rulerMarkers  = [];
+let rulerLabels   = [];
+
 // ---- Snap System ----
 const SNAP_PX = 28; // raio em pixels para encaixar
 let snapTargets = [];
@@ -1257,6 +1375,88 @@ function hideFloatBar() {
     floatBar.style.display = 'none';
 }
 
+// ---- Ruler Tool ----
+function rulerClick(latlng) {
+    rulerPoints.push(latlng);
+    const idx = rulerPoints.length;
+
+    // Pin marker at clicked point
+    const pin = L.circleMarker(latlng, {
+        radius: 5, color: '#ffdd00', fillColor: '#ffdd00',
+        fillOpacity: 1, weight: 2, pane: 'markerPane'
+    }).addTo(map);
+    rulerMarkers.push(pin);
+
+    if (rulerPoints.length >= 2) {
+        const prev = rulerPoints[rulerPoints.length - 2];
+        const segM = latlng.distanceTo(prev);
+        const midLat = (prev.lat + latlng.lat) / 2;
+        const midLng = (prev.lng + latlng.lng) / 2;
+        const segLabel = L.marker([midLat, midLng], {
+            icon: L.divIcon({
+                className: '',
+                html: `<div style="background:rgba(0,0,0,.75);color:#ffdd00;font-size:11px;padding:2px 6px;border-radius:4px;white-space:nowrap;pointer-events:none">${fmtDist(segM)}</div>`,
+                iconAnchor: [0, 0]
+            }),
+            interactive: false
+        }).addTo(map);
+        rulerLabels.push(segLabel);
+    }
+
+    // Rebuild polyline
+    if (rulerPolyline) rulerPolyline.remove();
+    rulerPolyline = L.polyline(rulerPoints, {
+        color: '#ffdd00', weight: 2, dashArray: '6,4', opacity: 0.9
+    }).addTo(map);
+
+    // Update float bar with total distance
+    const total = rulerTotalDist();
+    showFloatBar(`
+        <i class="fas fa-ruler-horizontal" style="color:#ffdd00"></i>
+        <span>Régua — clique para adicionar pontos</span>
+        <span style="background:rgba(255,221,0,.15);padding:3px 10px;border-radius:10px;font-weight:700;color:#ffdd00">${fmtDist(total)}</span>
+        <button class="btn btn-sm" style="background:#ff4455;color:#fff;margin-left:8px" onclick="stopRuler();setTool('select')">
+            <i class="fas fa-times"></i> Finalizar
+        </button>
+    `);
+}
+
+function rulerTotalDist() {
+    let d = 0;
+    for (let i = 1; i < rulerPoints.length; i++) {
+        d += rulerPoints[i].distanceTo(rulerPoints[i - 1]);
+    }
+    return d;
+}
+
+function fmtDist(m) {
+    return m >= 1000 ? (m / 1000).toFixed(3) + ' km' : Math.round(m) + ' m';
+}
+
+function stopRuler() {
+    rulerPoints = [];
+    if (rulerPolyline) { rulerPolyline.remove(); rulerPolyline = null; }
+    rulerMarkers.forEach(m => m.remove()); rulerMarkers = [];
+    rulerLabels.forEach(l => l.remove());  rulerLabels = [];
+    hideFloatBar();
+}
+
+function toggleRuler() {
+    if (currentTool === 'ruler') {
+        stopRuler();
+        setTool('select');
+    } else {
+        setTool('ruler');
+        showFloatBar(`
+            <i class="fas fa-ruler-horizontal" style="color:#ffdd00"></i>
+            <span>Régua — clique no mapa para medir distâncias</span>
+            <button class="btn btn-sm" style="background:#ff4455;color:#fff;margin-left:8px" onclick="stopRuler();setTool('select')">
+                <i class="fas fa-times"></i> Finalizar
+            </button>
+        `);
+    }
+}
+
 // ---- Move Mode ----
 function toggleMoveMode() {
     // Cannot activate move mode while drawing a cable
@@ -1302,6 +1502,10 @@ function setTool(tool) {
     // Parar cabo se trocar
     if (drawingCabo && tool !== 'cabo') {
         stopDrawCabo();
+    }
+    // Parar régua se trocar
+    if (currentTool === 'ruler' && tool !== 'ruler') {
+        stopRuler();
     }
 
     currentTool = tool;
@@ -1516,6 +1720,8 @@ map.on('click', function(e) {
         } else {
             addCaboPoint(lat, lng, null, null, null);
         }
+    } else if (currentTool === 'ruler') {
+        rulerClick(e.latlng);
     }
 });
 
@@ -1934,7 +2140,13 @@ const ctxEl        = document.getElementById('ctx-cabo');
 
 function closeCtxCabo() { ctxEl.style.display = 'none'; _ctxCabo = null; }
 document.addEventListener('click', () => { closeCtxCabo(); closeCaboPicker(); });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeCtxCabo(); closeCaboPicker(); } });
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+        closeCtxCabo();
+        closeCaboPicker();
+        if (currentTool === 'ruler') { stopRuler(); setTool('select'); }
+    }
+});
 
 // Distância de ponto P ao segmento AB (em pixels de container)
 function ptToSegDist(p, a, b) {

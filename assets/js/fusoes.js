@@ -952,8 +952,11 @@ function showDotMenu(dot,mx,my){
     html+=`<div class="dot-menu-item" onclick="verSinalFibra(${cid},${fn});closeDotMenu()">
         <i class="fas fa-signal" style="color:#00ccff"></i> Ver Sinal
     </div>`;
-    html+=`<div class="dot-menu-item" onclick="verRotaFibra(${cid},${fn});closeDotMenu()">
-        <i class="fas fa-route" style="color:#ffaa00"></i> Ver Rota da Fibra
+    html+=`<div class="dot-menu-item" onclick="verRotaFibra(${cid},${fn},'backward');closeDotMenu()">
+        <i class="fas fa-arrow-left" style="color:#ffaa00"></i> Rota → OLT (origem)
+    </div>`;
+    html+=`<div class="dot-menu-item" onclick="verRotaFibra(${cid},${fn},'forward');closeDotMenu()">
+        <i class="fas fa-arrow-right" style="color:#00cc66"></i> Rota → Destino (CTOs)
     </div>`;
     html+=`<div class="dot-menu-item" style="color:#555;font-size:11px;padding-top:2px;padding-bottom:2px" onclick="closeDotMenu()">
         <i class="fas fa-times-circle"></i> Fechar
@@ -1068,15 +1071,28 @@ async function verSinalFibra(caboId,fibraNum){
 }
 
 // ── Ver Rota da Fibra ─────────────────────────────────────────────────────────
-async function verRotaFibra(caboId,fibraNum){
+async function verRotaFibra(caboId,fibraNum,sentido='backward'){
     document.getElementById('rota-modal').style.display='flex';
     const content=document.getElementById('rota-content');
     content.innerHTML='<div style="text-align:center;color:#888"><i class="fas fa-spinner fa-spin"></i> Carregando rota...</div>';
     try{
-        const r=await fetch(`${BASE_URL}/api/rota.php?tipo=fibra&id=${caboId}&fibra=${fibraNum}&elem_tipo=${ELEM_TIPO}&elem_id=${ELEM_ID}`);
+        const r=await fetch(`${BASE_URL}/api/rota.php?tipo=fibra&id=${caboId}&fibra=${fibraNum}&elem_tipo=${ELEM_TIPO}&elem_id=${ELEM_ID}&sentido=${sentido}`);
         const d=await r.json();
         if(!d.success){content.innerHTML=`<div style="color:#ff4455">${d.error||'Erro'}</div>`;return;}
-        content.innerHTML=renderRotaDiagram(d.rota,d.sinal,d.aviso);
+        // Toggle buttons para trocar sentido sem fechar o modal
+        const toggleHtml=`<div style="display:flex;gap:8px;margin-bottom:12px">
+            <button onclick="verRotaFibra(${caboId},${fibraNum},'backward')"
+                style="flex:1;padding:6px 10px;border-radius:6px;border:1px solid ${sentido==='backward'?'rgba(255,170,0,.6)':'rgba(255,255,255,.1)'};
+                background:${sentido==='backward'?'rgba(255,170,0,.1)':'transparent'};color:${sentido==='backward'?'#ffaa00':'#888'};font-size:12px;cursor:pointer">
+                <i class="fas fa-arrow-left"></i> ← OLT (origem)
+            </button>
+            <button onclick="verRotaFibra(${caboId},${fibraNum},'forward')"
+                style="flex:1;padding:6px 10px;border-radius:6px;border:1px solid ${sentido==='forward'?'rgba(0,204,102,.6)':'rgba(255,255,255,.1)'};
+                background:${sentido==='forward'?'rgba(0,204,102,.1)':'transparent'};color:${sentido==='forward'?'#00cc66':'#888'};font-size:12px;cursor:pointer">
+                Destino (CTOs) → <i class="fas fa-arrow-right"></i>
+            </button>
+        </div>`;
+        content.innerHTML=toggleHtml+renderRotaDiagram(d.rota,d.sinal,d.aviso,sentido);
     }catch(e){content.innerHTML='<div style="color:#ff4455">Erro de comunicação</div>';}
 }
 
@@ -1095,6 +1111,25 @@ async function verRotaSplitter(instId,porta){
 // ── Rota diagram renderer ─────────────────────────────────────────────────────
 function round3(v){return Math.round(v*1000)/1000;}
 
+// One-liner summary of a branch sub-route (for multi-output splitter display)
+function compactRouteText(rota){
+    if(!rota||!rota.length) return '<span style="color:#555">sem dados</span>';
+    const parts=[];
+    for(const n of rota){
+        if(n.t==='cabo'){
+            const m=n.comprimento_m||0;
+            const dist=m>=1000?(m/1000).toFixed(1)+'km':Math.round(m)+'m';
+            parts.push(`<span style="color:#3399ff">${escHtml(n.codigo)}</span><span style="color:#555"> (${dist})</span>`);
+        } else if(n.t==='splice'&&n.elem_cod){
+            parts.push(`<span style="color:#888">${escHtml(n.elem_cod)}</span>`);
+        } else if(n.t==='splitter'){
+            parts.push(`<span style="color:#ffcc00">▽${escHtml(n.codigo||'SPL')}</span>`);
+        }
+    }
+    return (parts.length?parts.join('<span style="color:#444"> → </span>'):'—')
+        +' <span style="color:#00cc66;font-size:11px">●</span>';
+}
+
 function rotaSinalBadge(dbm){
     if(dbm===null||dbm===undefined) return '<span style="color:#555;font-size:11px">—</span>';
     const c=sinalCor(dbm);
@@ -1102,11 +1137,72 @@ function rotaSinalBadge(dbm){
 }
 
 
-function renderRotaDiagram(rota,sinalFinal,aviso){
+function renderBranchSegmentsFusoes(rota,distOffset=0){
+    const segs=[];let i=0;
+    while(i<rota.length){
+        if(rota[i].t==='cabo'){const cable=rota[i++];const events=[];
+            while(i<rota.length&&(rota[i].t==='splice'||rota[i].t==='splitter'))events.push(rota[i++]);
+            segs.push({cable,events});
+        }else{i++;}
+    }
+    const hl=()=>`<div style="width:8px;height:2px;background:rgba(51,153,255,.4);align-self:center;flex-shrink:0"></div>`;
+    const fmtM2=m=>m>=1000?(m/1000).toFixed(2)+' km':Math.round(m)+' m';
+    let html='';let d=distOffset;
+    for(const seg of segs){
+        const cab=seg.cable;
+        d+=cab.comprimento_m||0;
+        html+=`<div style="flex-shrink:0;border:1px solid rgba(51,153,255,.2);border-radius:7px;padding:4px 8px;background:rgba(8,11,15,.9);text-align:center;min-width:72px;align-self:center">
+            <div style="font-size:9px;font-weight:700;color:#3399ff;white-space:nowrap">${escHtml(cab.codigo)}</div>
+            <div style="font-size:8px;color:#666">F${cab.fibra_num}</div>
+            <div style="font-size:8px;color:#888">${fmtM2(cab.comprimento_m||0)}</div>
+        </div>${hl()}`;
+        if(!seg.events.length)continue;
+        const bgs=[];let cg=null;
+        for(const ev of seg.events){
+            const key=(ev.elem_tipo||'')+'|'+(ev.elem_cod||'');
+            if(!cg||cg.key!==key){cg={key,elem_tipo:ev.elem_tipo||'',elem_cod:ev.elem_cod||'',events:[]};bgs.push(cg);}
+            cg.events.push(ev);
+        }
+        for(const grp of bgs){
+            const eTipo=grp.elem_tipo.toUpperCase();const eCod=grp.elem_cod;
+            const isCTO=eTipo==='CTO';
+            const bClr=isCTO?'#00cc66':'#9933ff';
+            const bBdr=isCTO?'rgba(0,204,102,.25)':'rgba(153,51,255,.25)';
+            let bx=`<div style="flex-shrink:0;border:1.5px solid ${bBdr};border-radius:8px;padding:4px 8px;align-self:center;min-width:72px">`;
+            if(eCod)bx+=`<div style="display:flex;align-items:baseline;justify-content:space-between;gap:4px">
+                <div><div style="font-size:7px;color:${bClr};text-transform:uppercase;letter-spacing:.6px;font-weight:700">${eTipo}</div><div style="font-size:10px;font-weight:700;line-height:1.2">${escHtml(eCod)}</div></div>
+                <div style="font-size:8px;color:#555;white-space:nowrap;flex-shrink:0">${fmtM2(d)}</div>
+            </div>`;
+            for(const ev of grp.events){
+                if(ev.t==='splice'){const isP=ev.tipo==='passante';bx+=`<div style="font-size:8px;color:${isP?'#ffaa00':'#ff8800'}">${isP?'Passante':'Emenda'}</div>`;}
+                else if(ev.t==='splitter'){bx+=`<div style="font-size:8px;color:#ffcc00">▽ ${escHtml(ev.codigo||'')} ${escHtml(ev.relacao||'')}</div>`;}
+            }
+            bx+=`</div>`;
+            html+=bx+hl();
+        }
+    }
+    html+=`<div style="width:8px;height:8px;border-radius:50%;background:rgba(0,204,102,.55);align-self:center;flex-shrink:0"></div>`;
+    return html;
+}
+
+function renderRotaDiagram(rota,sinalFinal,aviso,sentido='backward'){
     if(!rota||!rota.length) return `<div style="padding:32px;text-align:center;color:#555">
         <i class="fas fa-unlink" style="font-size:32px;margin-bottom:12px;display:block"></i>
-        <div style="font-size:13px">Fibra não conectada à OLT — verifique as fusões</div>
+        <div style="font-size:13px">${sentido==='forward'?'Fibra sem destino mapeado — verifique as fusões':'Fibra sem conexão mapeada — verifique as fusões'}</div>
     </div>`;
+
+    // Banner quando rota existe mas sem sinal OLT
+    const semOltBanner = (sinalFinal===null && sentido==='backward')
+        ? `<div style="margin-bottom:10px;padding:7px 12px;border-radius:7px;background:rgba(255,136,0,.08);border:1px solid rgba(255,136,0,.25);font-size:11px;color:#ff8800;display:flex;align-items:center;gap:6px">
+            <i class="fas fa-info-circle"></i>
+            <span>Rota física — OLT não encontrada no trajeto. Atenuações não calculadas.</span>
+          </div>`
+        : (sentido==='forward'
+            ? `<div style="margin-bottom:10px;padding:7px 12px;border-radius:7px;background:rgba(0,204,102,.07);border:1px solid rgba(0,204,102,.2);font-size:11px;color:#00cc66;display:flex;align-items:center;gap:6px">
+                <i class="fas fa-arrow-right"></i>
+                <span>Rota no sentido destino — caminho físico da fibra até os pontos finais.</span>
+               </div>`
+            : '');
 
     // ── Parse rota ────────────────────────────────────────────────────────────
     let oltNode=null;
@@ -1149,9 +1245,11 @@ function renderRotaDiagram(rota,sinalFinal,aviso){
     const sinalInicio=oltNode?oltNode.potencia_dbm:null;
     const totalLoss=sinalInicio!=null&&sinalFinal!=null?round3(sinalInicio-sinalFinal):null;
     let sinalAcum=sinalInicio;
+    let distAcum=0;
 
     // ── Construir lista plana de itens {html, estW, isLine} ──────────────────
     const items=[];
+    const pendingBranches=[];
     const addItem=(html,estW,isLine=false)=>items.push({html,estW,isLine});
     const addLine=(color=SC,w=10)=>addItem(hline(color,w),w,true);
 
@@ -1171,6 +1269,7 @@ function renderRotaDiagram(rota,sinalFinal,aviso){
     // Segmentos
     for(const seg of segments){
         const cab=seg.cable;
+        distAcum+=cab.comprimento_m||0;
         const sinalDepois=sinalAcum!=null?round3(sinalAcum-cab.perda_cabo):null;
         const corCab=sinalDepois!=null?sigQ(sinalDepois).c:'#555';
 
@@ -1208,14 +1307,15 @@ function renderRotaDiagram(rota,sinalFinal,aviso){
             const bClr=isCTO?'#00cc66':'#9933ff';
             const bIco=isCTO?'<i class="fas fa-network-wired"></i>':'<i class="fas fa-box-open"></i>';
 
-            let bx=`<div style="flex-shrink:0;min-width:130px;max-width:170px;border:1.5px solid ${bBdr};border-radius:9px;background:${bBg};overflow:hidden;align-self:center">`;
+            let bx=`<div style="flex-shrink:0;min-width:130px;max-width:180px;border:1.5px solid ${bBdr};border-radius:9px;background:${bBg};overflow:hidden;align-self:center">`;
             if(eCod){
                 bx+=`<div style="padding:6px 8px;border-bottom:1px solid ${bBdr};display:flex;align-items:center;gap:5px">
                     <div style="width:22px;height:22px;border-radius:6px;background:rgba(128,128,128,.08);display:flex;align-items:center;justify-content:center;color:${bClr};font-size:11px;flex-shrink:0">${bIco}</div>
-                    <div>
+                    <div style="flex:1;min-width:0">
                         <div style="font-size:7px;color:${bClr};text-transform:uppercase;letter-spacing:.7px;font-weight:700">${eTipo}</div>
                         <div style="font-size:11px;font-weight:700;line-height:1.2">${escHtml(eCod)}</div>
                     </div>
+                    <div style="font-size:8px;color:#555;white-space:nowrap;flex-shrink:0;text-align:right">${fmtM(distAcum)}</div>
                 </div>`;
             }
             bx+=`<div style="padding:5px 7px;display:flex;flex-direction:column;gap:4px">`;
@@ -1233,6 +1333,20 @@ function renderRotaDiagram(rota,sinalFinal,aviso){
                         <div style="font-size:9px;color:#555;margin-top:1px">Perda: −${perda} dBm</div>
                         ${sinalAcum!=null?`<div style="margin-top:3px">${sigChip(sinalAcum)}${sigBar(sinalAcum)}</div>`:''}
                     </div>`;
+                } else if(ev.t==='splitter'&&ev.branches){
+                    // Multi-output splitter — show header only, branches rendered below main flow
+                    const connLoss=ev.perda_emenda??0;
+                    const splLoss=ev.perda_db;
+                    bx+=`<div style="padding:4px 6px;border-radius:6px;background:rgba(255,204,0,.05);border:1px solid rgba(255,204,0,.16)">
+                        <div style="display:flex;align-items:center;gap:4px">
+                            <span style="font-size:13px;color:#ffcc00;line-height:1;flex-shrink:0">▽</span>
+                            <div>
+                                <div style="font-size:10px;font-weight:700;color:#ffcc00">${escHtml(ev.codigo||'')} ${escHtml(ev.relacao||'')} · ${ev.saidas_total||ev.branches.length} saídas</div>
+                                <div style="font-size:8px;color:#00cc66">↓ saídas detalhadas abaixo</div>
+                            </div>
+                        </div>
+                    </div>`;
+                    pendingBranches.push(ev);
                 } else if(ev.t==='splitter'){
                     const connLoss=ev.perda_emenda??0;
                     sinalAcum=sinalAcum!=null?round3(sinalAcum-connLoss):null;
@@ -1292,6 +1406,9 @@ function renderRotaDiagram(rota,sinalFinal,aviso){
     // ── Montar HTML ───────────────────────────────────────────────────────────
     let html=`<div style="display:flex;flex-direction:column;gap:0;font-family:inherit">`;
 
+    // Banner de contexto (sem OLT / sentido forward)
+    html+=semOltBanner;
+
     // Barra de resumo
     html+=`<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;padding:7px 12px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);border-radius:7px;font-size:10px;color:#777;margin-bottom:10px">
         <span><i class="fas fa-route" style="color:#555;margin-right:4px"></i>Distância <b style="color:#bbb">${fmtM(totalDist)}</b></span>
@@ -1315,6 +1432,23 @@ function renderRotaDiagram(rota,sinalFinal,aviso){
                 <div style="align-self:flex-start;width:2px;height:20px;background:${SC}"></div>
             </div>`;
         }
+    }
+
+    // Render each multi-branch splitter as full sub-routes below the main flow
+    for(const ev of pendingBranches){
+        html+=`<div style="margin-top:10px;border-top:1px solid rgba(255,204,0,.18);padding-top:10px">
+            <div style="font-size:10px;color:#ffcc00;font-weight:700;margin-bottom:7px;display:flex;align-items:center;gap:5px">
+                <span style="font-size:12px">▽</span>
+                ${escHtml(ev.codigo||'Splitter')} ${escHtml(ev.relacao||'')} — ${ev.saidas_total||ev.branches.length} saídas
+            </div>`;
+        for(const br of ev.branches){
+            html+=`<div style="display:flex;align-items:center;margin-bottom:7px;gap:0;flex-wrap:wrap">
+                <div style="flex-shrink:0;width:26px;font-size:9px;color:#ffcc00;font-weight:700;padding-right:6px;text-align:right;align-self:center">${escHtml(br.porta)}</div>
+                <div style="display:flex;align-items:center;flex-wrap:wrap;gap:0">${renderBranchSegmentsFusoes(br.rota,distAcum)}</div>
+            </div>`;
+            if(br.aviso)html+=`<div style="margin-left:32px;margin-bottom:4px;font-size:9px;color:#ff8800"><i class="fas fa-exclamation-triangle"></i> ${escHtml(br.aviso)}</div>`;
+        }
+        html+=`</div>`;
     }
 
     // Aviso

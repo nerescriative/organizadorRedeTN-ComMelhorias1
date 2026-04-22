@@ -190,6 +190,7 @@ $manutRecentes = $db->fetchAll("SELECT m.*, u.nome as tecnico FROM manutencoes m
                     [BASE_URL.'/modules/olts/index.php',       'fas fa-server',          '#ff6600', 'OLTs',                    'Gerenciar OLTs e PONs'],
                     [BASE_URL.'/modules/manutencoes/index.php','fas fa-tools',           '#ff6655', 'Manutenções',             'Histórico completo de manutenções'],
                     [BASE_URL.'/modules/fusoes/index.php',     'fas fa-sitemap',         '#ff9900', 'Mapa de Fusões',          'Visualizar diagrama de fusões por CEO'],
+                    [BASE_URL.'/modules/relatorios/mapa_pon.php','fas fa-project-diagram','#33ccaa', 'Mapa de PON',             'Topologia completa de uma porta PON'],
                     [BASE_URL.'/dashboard.php',                'fas fa-map',             '#00b4ff', 'Mapa da Rede',            'Ver mapa geográfico da infraestrutura'],
                 ];
                 foreach ($links as [$url, $icon, $color, $title, $desc]): ?>

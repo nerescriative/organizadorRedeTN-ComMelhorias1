@@ -551,6 +551,12 @@ function buildCableCards() {
                 selectItem({type:'fibra', caboId: cabo.id, fibraNum: fn}, dot);
             });
 
+            dot.addEventListener('contextmenu', e => {
+                e.preventDefault();
+                e.stopPropagation();
+                showFiberCtxMenu(e.clientX, e.clientY, cabo.id, fn, `${esc(cabo.codigo)} · ${lbl_text}`);
+            });
+
             row.appendChild(portLbl);
             row.appendChild(connDesc);
             row.appendChild(dot);
@@ -666,3 +672,296 @@ setTimeout(() => {
 
 window.addEventListener('resize', () => { fitCanvas(); drawLines(); });
 canvasWrap.addEventListener('scroll', drawLines);
+
+// ── Fiber right-click context menu ───────────────────────────────────────────
+function showFiberCtxMenu(x, y, caboId, fibraNum, label) {
+    closeFiberCtxMenu();
+    const menu = document.createElement('div');
+    menu.id = 'fiber-ctx-menu';
+    menu.style.cssText = `position:fixed;left:${x}px;top:${y}px;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:4px;z-index:99999;box-shadow:0 4px 20px rgba(0,0,0,.6);min-width:190px`;
+    menu.innerHTML = `
+        <div style="padding:4px 10px 5px;font-size:10px;color:#555;border-bottom:1px solid #21262d;margin-bottom:3px;white-space:nowrap">${esc(label)}</div>
+        <div class="fiber-ctx-item" onclick="verRotaFibraDio(${caboId},${fibraNum});closeFiberCtxMenu()">
+            <i class="fas fa-route" style="color:#00cc66;width:14px"></i> Ver Rota → CTOs
+        </div>`;
+    document.body.appendChild(menu);
+    const rect = menu.getBoundingClientRect();
+    if (rect.right  > window.innerWidth)  menu.style.left = (x - rect.width)  + 'px';
+    if (rect.bottom > window.innerHeight) menu.style.top  = (y - rect.height) + 'px';
+    setTimeout(() => document.addEventListener('click', closeFiberCtxMenu, {once: true}), 10);
+}
+function closeFiberCtxMenu() {
+    const m = document.getElementById('fiber-ctx-menu');
+    if (m) m.remove();
+}
+
+// ── Ver Rota da Fibra (from DIO map) — always forward toward CTOs ─────────────
+async function verRotaFibraDio(caboId, fibraNum) {
+    const modal   = document.getElementById('rota-modal-dio');
+    const content = document.getElementById('rota-content-dio');
+    modal.style.display = 'flex';
+    content.innerHTML = '<div style="text-align:center;padding:32px;color:#888"><i class="fas fa-spinner fa-spin"></i> Carregando rota...</div>';
+    try {
+        const r = await fetch(`${BASE_URL}/api/rota.php?tipo=fibra&id=${caboId}&fibra=${fibraNum}&elem_id=0&sentido=forward`);
+        const d = await r.json();
+        if (!d.success) { content.innerHTML = `<div style="color:#ff4455;padding:16px">${escRotaDio(d.error||'Erro')}</div>`; return; }
+        content.innerHTML = renderRotaDiagramDio(d.rota, d.sinal, d.aviso, 'forward');
+    } catch(e) { content.innerHTML = '<div style="color:#ff4455;padding:16px">Erro de comunicação</div>'; }
+}
+
+// ── Route diagram renderer (DIO version) ─────────────────────────────────────
+function escRotaDio(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function r3dio(v){ return Math.round(v*1000)/1000; }
+function sinalCorDio(dbm){
+    if(dbm>=-15)return'#00ff88';if(dbm>=-20)return'#88ff00';
+    if(dbm>=-25)return'#ffcc00';if(dbm>=-30)return'#ff8800';return'#ff4444';
+}
+function sigQDio(dbm){
+    if(dbm>=-15)return{lbl:'Excelente',c:'#00ff88'};if(dbm>=-20)return{lbl:'Bom',c:'#88ff00'};
+    if(dbm>=-25)return{lbl:'Aceitável',c:'#ffcc00'};if(dbm>=-30)return{lbl:'Crítico',c:'#ff8800'};
+    return{lbl:'Ruim',c:'#ff4444'};
+}
+function sigChipDio(dbm){
+    if(dbm===null||dbm===undefined)return'';
+    const q=sigQDio(dbm);
+    return `<div style="font-size:13px;font-weight:800;color:${q.c};line-height:1;white-space:nowrap">${dbm>=0?'+':''}${dbm.toFixed(2)}<span style="font-size:9px;margin-left:2px;font-weight:400">dBm</span></div>`;
+}
+function sigBarDio(dbm,w='64px'){
+    const q=sigQDio(dbm),p=Math.max(0,Math.min(100,((dbm+30)/30)*100));
+    return `<div style="width:${w};height:3px;background:rgba(255,255,255,.08);border-radius:2px;overflow:hidden;margin-top:3px"><div style="width:${p}%;height:100%;background:${q.c}"></div></div>`;
+}
+// Renders a branch rota as a compact horizontal flow (cable boxes + event boxes)
+function renderBranchSegmentsDio(rota,distOffset=0){
+    const segs=[];let i=0;
+    while(i<rota.length){
+        if(rota[i].t==='cabo'){const cable=rota[i++];const events=[];
+            while(i<rota.length&&(rota[i].t==='splice'||rota[i].t==='splitter'))events.push(rota[i++]);
+            segs.push({cable,events});
+        }else{i++;}
+    }
+    const hl=()=>`<div style="width:8px;height:2px;background:rgba(51,153,255,.4);align-self:center;flex-shrink:0"></div>`;
+    const fmtM2=m=>m>=1000?(m/1000).toFixed(2)+' km':Math.round(m)+' m';
+    let html='';let d=distOffset;
+    for(const seg of segs){
+        const cab=seg.cable;
+        d+=cab.comprimento_m||0;
+        html+=`<div style="flex-shrink:0;border:1px solid rgba(51,153,255,.2);border-radius:7px;padding:4px 8px;background:rgba(8,11,15,.9);text-align:center;min-width:72px;align-self:center">
+            <div style="font-size:9px;font-weight:700;color:#3399ff;white-space:nowrap">${escRotaDio(cab.codigo)}</div>
+            <div style="font-size:8px;color:#666">F${cab.fibra_num}</div>
+            <div style="font-size:8px;color:#888">${fmtM2(cab.comprimento_m||0)}</div>
+        </div>${hl()}`;
+        if(!seg.events.length)continue;
+        const bgs=[];let cg=null;
+        for(const ev of seg.events){
+            const key=(ev.elem_tipo||'')+'|'+(ev.elem_cod||'');
+            if(!cg||cg.key!==key){cg={key,elem_tipo:ev.elem_tipo||'',elem_cod:ev.elem_cod||'',events:[]};bgs.push(cg);}
+            cg.events.push(ev);
+        }
+        for(const grp of bgs){
+            const eTipo=grp.elem_tipo.toUpperCase();const eCod=grp.elem_cod;
+            const isCTO=eTipo==='CTO';
+            const bClr=isCTO?'#00cc66':'#9933ff';
+            const bBdr=isCTO?'rgba(0,204,102,.25)':'rgba(153,51,255,.25)';
+            let bx=`<div style="flex-shrink:0;border:1.5px solid ${bBdr};border-radius:8px;padding:4px 8px;align-self:center;min-width:72px">`;
+            if(eCod)bx+=`<div style="display:flex;align-items:baseline;justify-content:space-between;gap:4px">
+                <div><div style="font-size:7px;color:${bClr};text-transform:uppercase;letter-spacing:.6px;font-weight:700">${eTipo}</div><div style="font-size:10px;font-weight:700;line-height:1.2">${escRotaDio(eCod)}</div></div>
+                <div style="font-size:8px;color:#555;white-space:nowrap;flex-shrink:0">${fmtM2(d)}</div>
+            </div>`;
+            for(const ev of grp.events){
+                if(ev.t==='splice'){const isP=ev.tipo==='passante';bx+=`<div style="font-size:8px;color:${isP?'#ffaa00':'#ff8800'}">${isP?'Passante':'Emenda'}</div>`;}
+                else if(ev.t==='splitter'){bx+=`<div style="font-size:8px;color:#ffcc00">▽ ${escRotaDio(ev.codigo||'')} ${escRotaDio(ev.relacao||'')}</div>`;}
+            }
+            bx+=`</div>`;
+            html+=bx+hl();
+        }
+    }
+    html+=`<div style="width:8px;height:8px;border-radius:50%;background:rgba(0,204,102,.55);align-self:center;flex-shrink:0"></div>`;
+    return html;
+}
+
+function compactRouteTextDio(rota){
+    if(!rota||!rota.length)return'<span style="color:#555">sem dados</span>';
+    const parts=[];
+    for(const n of rota){
+        if(n.t==='cabo'){const m=n.comprimento_m||0;const d=m>=1000?(m/1000).toFixed(1)+'km':Math.round(m)+'m';parts.push(`<span style="color:#3399ff">${escRotaDio(n.codigo)}</span><span style="color:#555"> (${d})</span>`);}
+        else if(n.t==='splice'&&n.elem_cod)parts.push(`<span style="color:#888">${escRotaDio(n.elem_cod)}</span>`);
+        else if(n.t==='splitter')parts.push(`<span style="color:#ffcc00">▽${escRotaDio(n.codigo||'SPL')}</span>`);
+    }
+    return(parts.length?parts.join('<span style="color:#444"> → </span>'):'—')+' <span style="color:#00cc66;font-size:11px">●</span>';
+}
+
+function renderRotaDiagramDio(rota,sinalFinal,aviso,sentido){
+    sentido=sentido||'backward';
+    if(!rota||!rota.length)return`<div style="padding:32px;text-align:center;color:#555">
+        <i class="fas fa-unlink" style="font-size:32px;margin-bottom:12px;display:block"></i>
+        <div style="font-size:13px">${sentido==='forward'?'Fibra sem destino mapeado — verifique as fusões':'Fibra sem conexão mapeada — verifique as fusões'}</div>
+    </div>`;
+
+    const semOltBanner=(sinalFinal===null&&sentido==='backward')
+        ?`<div style="margin-bottom:10px;padding:7px 12px;border-radius:7px;background:rgba(255,136,0,.08);border:1px solid rgba(255,136,0,.25);font-size:11px;color:#ff8800;display:flex;align-items:center;gap:6px"><i class="fas fa-info-circle"></i><span>Rota física — OLT não encontrada. Atenuações não calculadas.</span></div>`
+        :(sentido==='forward'
+            ?`<div style="margin-bottom:10px;padding:7px 12px;border-radius:7px;background:rgba(0,204,102,.07);border:1px solid rgba(0,204,102,.2);font-size:11px;color:#00cc66;display:flex;align-items:center;gap:6px"><i class="fas fa-arrow-right"></i><span>Rota no sentido destino — caminho físico da fibra até os pontos finais.</span></div>`
+            :'');
+
+    let oltNode=null;const segments=[];let i=0;
+    if(rota[0]&&rota[0].t==='olt'){oltNode=rota[0];i=1;}
+    while(i<rota.length){
+        if(rota[i].t==='cabo'){const cable=rota[i++];const events=[];
+            while(i<rota.length&&(rota[i].t==='splice'||rota[i].t==='splitter'))events.push(rota[i++]);
+            segments.push({cable,events});
+        }else{i++;}
+    }
+
+    const fmtM=m=>m>=1000?(m/1000).toFixed(2)+' km':Math.round(m)+' m';
+    const SC='rgba(51,153,255,.5)';
+    const hline=(color=SC,w=10)=>`<div style="width:${w}px;height:2px;background:${color};align-self:center;flex-shrink:0"></div>`;
+    let totalDist=0;segments.forEach(s=>totalDist+=s.cable.comprimento_m||0);
+    const sinalInicio=oltNode?oltNode.potencia_dbm:null;
+    const totalLoss=sinalInicio!=null&&sinalFinal!=null?r3dio(sinalInicio-sinalFinal):null;
+    let sinalAcum=sinalInicio;
+    let distAcum=0;
+    const items=[];
+    const pendingBranches=[];
+    const addItem=(html,estW,isLine=false)=>items.push({html,estW,isLine});
+    const addLine=(color=SC,w=10)=>addItem(hline(color,w),w,true);
+
+    if(oltNode){
+        addItem(`<div style="flex-shrink:0;width:110px;border-radius:9px;padding:10px 8px;background:rgba(0,173,255,.06);border:1.5px solid rgba(0,173,255,.25);display:flex;flex-direction:column;align-items:center;text-align:center;gap:4px">
+            <div style="width:28px;height:28px;border-radius:8px;background:rgba(0,173,255,.13);display:flex;align-items:center;justify-content:center;color:#00adff;font-size:13px"><i class="fas fa-server"></i></div>
+            <div style="font-size:7px;color:#00adff;text-transform:uppercase;letter-spacing:1px;font-weight:700">OLT</div>
+            <div style="font-size:10px;font-weight:700;line-height:1.3;word-break:break-word">${escRotaDio(oltNode.nome)}</div>
+            <div style="font-size:9px;color:#555">${escRotaDio(String(oltNode.pon))}</div>
+            ${sigChipDio(oltNode.potencia_dbm)}${sigBarDio(oltNode.potencia_dbm)}
+        </div>`,110);
+        addLine();
+    }
+
+    for(const seg of segments){
+        const cab=seg.cable;
+        distAcum+=cab.comprimento_m||0;
+        const sinalDepois=sinalAcum!=null?r3dio(sinalAcum-cab.perda_cabo):null;
+        const corCab=sinalDepois!=null?sigQDio(sinalDepois).c:'#555';
+        addItem(`<div style="flex-shrink:0;align-self:center;border:1px solid rgba(51,153,255,.22);border-radius:8px;padding:6px 9px;background:rgba(8,11,15,.92);min-width:90px;text-align:center">
+            <div style="font-size:10px;font-weight:700;color:#3399ff;white-space:nowrap"><i class="fas fa-grip-lines-vertical" style="font-size:9px;margin-right:2px"></i>${escRotaDio(cab.codigo)}</div>
+            <div style="font-size:9px;color:#666;margin-top:2px">Fibra ${cab.fibra_num}</div>
+            <div style="font-size:9px;color:#888;font-weight:600;margin-top:1px">${fmtM(cab.comprimento_m)}</div>
+            <div style="font-size:8px;color:#444;margin-top:1px">−${cab.perda_cabo.toFixed(3)} dBm</div>
+            ${sinalDepois!=null?`<div style="font-size:10px;font-weight:700;color:${corCab};margin-top:2px">${sinalDepois>=0?'+':''}${sinalDepois.toFixed(2)} dBm</div>`:''}
+        </div>`,110);
+        addLine();sinalAcum=sinalDepois;
+        if(!seg.events.length)continue;
+        const boxGroups=[];let curGrp=null;
+        for(const ev of seg.events){
+            const key=(ev.elem_tipo||'')+'|'+(ev.elem_cod||'');
+            if(!curGrp||curGrp.key!==key){curGrp={key,elem_tipo:ev.elem_tipo||'',elem_cod:ev.elem_cod||'',events:[]};boxGroups.push(curGrp);}
+            curGrp.events.push(ev);
+        }
+        for(const grp of boxGroups){
+            const eTipo=grp.elem_tipo.toUpperCase();const eCod=grp.elem_cod;
+            const isCTO=eTipo==='CTO';
+            const bBdr=isCTO?'rgba(0,204,102,.28)':'rgba(153,51,255,.28)';
+            const bBg=isCTO?'rgba(0,204,102,.04)':'rgba(153,51,255,.04)';
+            const bClr=isCTO?'#00cc66':'#9933ff';
+            const bIco=isCTO?'<i class="fas fa-network-wired"></i>':'<i class="fas fa-box-open"></i>';
+            let bx=`<div style="flex-shrink:0;min-width:130px;max-width:180px;border:1.5px solid ${bBdr};border-radius:9px;background:${bBg};overflow:hidden;align-self:center">`;
+            if(eCod){bx+=`<div style="padding:6px 8px;border-bottom:1px solid ${bBdr};display:flex;align-items:center;gap:5px">
+                <div style="width:22px;height:22px;border-radius:6px;background:rgba(128,128,128,.08);display:flex;align-items:center;justify-content:center;color:${bClr};font-size:11px;flex-shrink:0">${bIco}</div>
+                <div style="flex:1;min-width:0"><div style="font-size:7px;color:${bClr};text-transform:uppercase;letter-spacing:.7px;font-weight:700">${eTipo}</div>
+                <div style="font-size:11px;font-weight:700;line-height:1.2">${escRotaDio(eCod)}</div></div>
+                <div style="font-size:8px;color:#555;white-space:nowrap;flex-shrink:0;text-align:right">${fmtM(distAcum)}</div>
+            </div>`;}
+            bx+=`<div style="padding:5px 7px;display:flex;flex-direction:column;gap:4px">`;
+            for(const ev of grp.events){
+                if(ev.t==='splice'){
+                    const perda=ev.perda_db??0;sinalAcum=sinalAcum!=null?r3dio(sinalAcum-perda):null;
+                    const isPass=ev.tipo==='passante';
+                    const passColor=isPass?'#ffaa00':'#ff8800';
+                    bx+=`<div style="padding:4px 6px;border-radius:6px;background:rgba(255,136,0,.06);border:1px solid rgba(255,136,0,.14)">
+                        <div style="font-size:10px;font-weight:700;color:${passColor}">${isPass?'Passante':'Emenda'}</div>
+                        <div style="font-size:9px;color:#555;margin-top:1px">Perda: −${perda} dBm</div>
+                        ${sinalAcum!=null?`<div style="margin-top:3px">${sigChipDio(sinalAcum)}${sigBarDio(sinalAcum)}</div>`:''}
+                    </div>`;
+                }else if(ev.t==='splitter'&&ev.branches){
+                    const connLoss=ev.perda_emenda??0;const splLoss=ev.perda_db;
+                    // Show simplified header only — branches rendered in full below the main flow
+                    bx+=`<div style="padding:4px 6px;border-radius:6px;background:rgba(255,204,0,.05);border:1px solid rgba(255,204,0,.16)">
+                        <div style="display:flex;align-items:center;gap:4px">
+                            <span style="font-size:13px;color:#ffcc00;line-height:1">▽</span>
+                            <div><div style="font-size:10px;font-weight:700;color:#ffcc00">${escRotaDio(ev.codigo||'')} ${escRotaDio(ev.relacao||'')} · ${ev.saidas_total||ev.branches.length} saídas</div>
+                            <div style="font-size:8px;color:#00cc66">↓ saídas detalhadas abaixo</div></div>
+                        </div>
+                    </div>`;
+                    pendingBranches.push(ev);
+                }else if(ev.t==='splitter'){
+                    const connLoss=ev.perda_emenda??0;sinalAcum=sinalAcum!=null?r3dio(sinalAcum-connLoss):null;
+                    const splLoss=ev.perda_db;sinalAcum=sinalAcum!=null&&splLoss!=null?r3dio(sinalAcum-splLoss):null;
+                    const porta=ev.porta?parseInt(ev.porta.slice(1))+1:null;
+                    bx+=`<div style="padding:4px 6px;border-radius:6px;background:rgba(255,204,0,.05);border:1px solid rgba(255,204,0,.16)">
+                        <div style="display:flex;align-items:center;gap:4px">
+                            <span style="font-size:13px;color:#ffcc00;line-height:1">▽</span>
+                            <div><div style="font-size:10px;font-weight:700;color:#ffcc00">${escRotaDio(ev.codigo||'')} ${escRotaDio(ev.relacao||'')}${porta?` · S${porta}`:''}</div>
+                            <div style="font-size:8px;color:#555">${connLoss?`Conn −${connLoss} · `:''}Div ${splLoss!=null?'−'+splLoss:'?'} dBm</div></div>
+                        </div>
+                        ${sinalAcum!=null?`<div style="margin-top:3px">${sigChipDio(sinalAcum)}${sigBarDio(sinalAcum)}</div>`:''}
+                    </div>`;
+                }
+            }
+            bx+=`</div></div>`;
+            addItem(bx,150);addLine();
+        }
+    }
+
+    const qFinal=sinalFinal!=null?sigQDio(sinalFinal):null;
+    if(items.length&&items[items.length-1].isLine)items.pop();
+    addLine('rgba(0,204,102,.5)');
+    addItem(`<div style="flex-shrink:0;width:100px;border:1.5px solid rgba(0,204,102,.25);border-radius:9px;padding:10px 8px;background:rgba(0,204,102,.04);display:flex;flex-direction:column;align-items:center;text-align:center;gap:3px">
+        <div style="width:24px;height:24px;border-radius:7px;background:rgba(0,204,102,.1);display:flex;align-items:center;justify-content:center;color:#00cc66;font-size:12px"><i class="fas fa-map-marker-alt"></i></div>
+        <div style="font-size:7px;color:#00cc66;text-transform:uppercase;letter-spacing:.8px;font-weight:700">Destino</div>
+        ${qFinal?`<div style="font-size:9px;color:${qFinal.c};font-weight:600">${qFinal.lbl}</div>`:''}
+        ${sinalFinal!=null?`${sigChipDio(sinalFinal)}${sigBarDio(sinalFinal)}`:'<span style="color:#555;font-size:14px">—</span>'}
+    </div>`,100);
+
+    const MAX_ROW_W=1160;const rows=[];let curRow=[],curW=0;
+    for(const item of items){
+        if(item.isLine&&curRow.length===0)continue;
+        if(curW+item.estW>MAX_ROW_W&&curRow.length>0){
+            if(curRow.length&&curRow[curRow.length-1].isLine)curRow.pop();
+            rows.push(curRow);curRow=item.isLine?[]:[item];curW=item.isLine?0:item.estW;
+        }else{curRow.push(item);curW+=item.estW;}
+    }
+    if(curRow.length)rows.push(curRow);
+
+    let html=`<div style="display:flex;flex-direction:column;gap:0;font-family:inherit">`;
+    html+=semOltBanner;
+    html+=`<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;padding:7px 12px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);border-radius:7px;font-size:10px;color:#777;margin-bottom:10px">
+        <span><i class="fas fa-route" style="color:#555;margin-right:4px"></i>Distância <b style="color:#bbb">${fmtM(totalDist)}</b></span>
+        ${totalLoss!=null?`<span><i class="fas fa-arrow-right" style="color:#ff8800;margin-right:4px"></i>Perda total <b style="color:#ff8800">−${totalLoss.toFixed(2)} dBm</b></span>`:''}
+        <span><i class="fas fa-box" style="color:#555;margin-right:4px"></i>Caixas <b style="color:#bbb">${segments.filter(s=>s.events.length).length}</b></span>
+    </div>`;
+    for(let r=0;r<rows.length;r++){
+        const isLast=r===rows.length-1;
+        html+=`<div style="display:flex;align-items:center;flex-wrap:nowrap">`;
+        html+=rows[r].map(it=>it.html).join('');
+        if(!isLast)html+=`<div style="flex:1;height:2px;background:${SC};min-width:8px"></div>`;
+        html+=`</div>`;
+        if(!isLast)html+=`<div style="display:flex;flex-direction:column"><div style="align-self:flex-end;width:2px;height:20px;background:${SC}"></div><div style="height:2px;background:${SC}"></div><div style="align-self:flex-start;width:2px;height:20px;background:${SC}"></div></div>`;
+    }
+    // Render each multi-branch splitter as full sub-routes below the main flow
+    for(const ev of pendingBranches){
+        html+=`<div style="margin-top:10px;border-top:1px solid rgba(255,204,0,.18);padding-top:10px">
+            <div style="font-size:10px;color:#ffcc00;font-weight:700;margin-bottom:7px;display:flex;align-items:center;gap:5px">
+                <span style="font-size:12px">▽</span>
+                ${escRotaDio(ev.codigo||'Splitter')} ${escRotaDio(ev.relacao||'')} — ${ev.saidas_total||ev.branches.length} saídas
+            </div>`;
+        for(const br of ev.branches){
+            html+=`<div style="display:flex;align-items:center;margin-bottom:7px;gap:0;flex-wrap:wrap">
+                <div style="flex-shrink:0;width:26px;font-size:9px;color:#ffcc00;font-weight:700;padding-right:6px;text-align:right;align-self:center">${escRotaDio(br.porta)}</div>
+                <div style="display:flex;align-items:center;flex-wrap:wrap;gap:0">${renderBranchSegmentsDio(br.rota,distAcum)}</div>
+            </div>`;
+        }
+        html+=`</div>`;
+    }
+    if(aviso)html+=`<div style="margin-top:10px;padding:5px 8px;border-radius:6px;background:rgba(255,136,0,.1);border:1px solid rgba(255,136,0,.18);font-size:10px;color:#ff8800;display:flex;align-items:center;gap:5px"><i class="fas fa-exclamation-triangle"></i>${escRotaDio(aviso)}</div>`;
+    html+=`</div>`;
+    return html;
+}

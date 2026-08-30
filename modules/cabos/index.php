@@ -51,7 +51,7 @@ flashMessages(); ?>
         <td><div style="display:flex;gap:6px">
             <a href="<?= BASE_URL ?>/modules/cabos/view.php?id=<?= $c['id'] ?>" class="btn btn-icon btn-secondary" title="Ver"><i class="fas fa-eye"></i></a>
             <a href="<?= BASE_URL ?>/modules/cabos/edit.php?id=<?= $c['id'] ?>" class="btn btn-icon btn-primary" title="Editar"><i class="fas fa-edit"></i></a>
-            <?php deleteButton($c['id'], 'Remover cabo '.$c['codigo'].' e todos os seus pontos?') ?>
+            <button class="btn btn-icon btn-danger" title="Excluir" onclick="excluirCabo(<?= $c['id'] ?>, '<?= $c['codigo'] ?>')"><i class="fas fa-trash"></i></button>
         </div></td>
     </tr>
     <?php endforeach; ?>
@@ -59,3 +59,17 @@ flashMessages(); ?>
 <?php tableClose() ?>
 </div>
 <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
+
+
+<script>
+async function excluirCabo(id, codigo) {
+    try {
+        const res = await fetch("../../api/elements.php?type=delete_cabo&id=" + id, { method: 'DELETE' });
+        const result = await res.json();
+        if (result.success) {
+            alert('✓ Cabo excluído com sucesso!');
+            window.location.reload();
+        } else { alert('Erro: ' + result.error); }
+    } catch (e) { alert('Erro de comunicação.'); }
+}
+</script>

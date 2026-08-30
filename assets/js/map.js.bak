@@ -20,17 +20,11 @@ const NO_POI_STYLES = [
 ];
 
 // Tile layers
-// Tile layers nativos corrigidos
-// Tile layers nativos corrigidos
 const tiles = {
-    street:    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                   maxZoom: 19, attribution: '© OpenStreetMap'
-               }),
-    satellite: L.tileLayer('https://arcgisonline.com{z}/{y}/{x}', {
-                   maxZoom: 19, attribution: 'Esri'
-               }),
-    dark:      L.tileLayer('https://{s}://{z}/{x}/{y}{r}.png', {
-                   maxZoom: 20, attribution: 'CARTO'
+    street:    L.gridLayer.googleMutant({ type: 'roadmap', maxZoom: 22, styles: NO_POI_STYLES }),
+    satellite: L.gridLayer.googleMutant({ type: 'hybrid',  maxZoom: 22, styles: NO_POI_STYLES }),
+    dark:      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                   maxZoom: 20, attribution: '&copy; OpenStreetMap &copy; CARTO'
                }),
 };
 
@@ -187,7 +181,7 @@ function initConfigMap() {
          parseFloat(document.getElementById('cfg-lng').value) || MAP_CONFIG.lng],
         parseInt(document.getElementById('cfg-zoom').value) || MAP_CONFIG.zoom
     );
-    L.tileLayer({ type: 'roadmap', maxZoom: 22 }).addTo(configMap);
+    L.gridLayer.googleMutant({ type: 'roadmap', maxZoom: 22 }).addTo(configMap);
 
     // Marca ponto inicial
     const lat = parseFloat(document.getElementById('cfg-lat').value);
@@ -1695,26 +1689,6 @@ function undoLastPoint() {
 // ---- MAP CLICK / DBLCLICK HANDLERS ----
 // ============================================================
 map.on('click', function(e) {
-    if (currentTool === 'rack') {
-        let latInp = document.getElementById('rack-lat') || document.querySelector('#modal-rack input[name="lat"]') || document.querySelector('input[name="lat"]');
-        let lngInp = document.getElementById('rack-lng') || document.querySelector('#modal-rack input[name="lng"]') || document.querySelector('input[name="lng"]');
-        if(latInp) latInp.value = e.latlng.lat;
-        if(lngInp) lngInp.value = e.latlng.lng;
-        if (typeof openModal === 'function') { openModal('modal-rack'); }
-        else { document.getElementById('modal-rack').style.display = 'flex'; }
-        setTool('select');
-        return;
-    }
-    if (currentTool === 'rack') {
-        let latInp = document.getElementById('rack-lat') || document.querySelector('#modal-rack input[name="lat"]') || document.querySelector('input[name="lat"]');
-        let lngInp = document.getElementById('rack-lng') || document.querySelector('#modal-rack input[name="lng"]') || document.querySelector('input[name="lng"]');
-        if(latInp) latInp.value = e.latlng.lat;
-        if(lngInp) lngInp.value = e.latlng.lng;
-        if (typeof openModal === 'function') { openModal('modal-rack'); }
-        else { document.getElementById('modal-rack').style.display = 'flex'; }
-        setTool('select');
-        return;
-    }
     const { lat, lng } = e.latlng;
 
     if (currentTool === 'poste' && batchPosteAtivo) {
@@ -1799,8 +1773,6 @@ async function saveCabo(event) {
         const result = await res.json();
         if (result.success) {
             closeModal('modal-cabo');
-            window.location.reload();
-            window.location.reload();
             form.reset();
             stopDrawCabo();
             setTool('select');
@@ -2444,8 +2416,6 @@ async function salvarReserva() {
         const ci = ELEMENTS.cabos.findIndex(c => c.id == _reservaCtx.cabo_id);
         if (ci >= 0) ELEMENTS.cabos[ci].comprimento_m = d.comprimento_m;
         closeModal('modal-reserva');
-            window.location.reload();
-            window.location.reload();
         renderReservas();
         renderCabos(); // update info panel if open
         showToast(`Reserva de ${metros} m adicionada ao cabo ${_reservaCtx.cabo_codigo}.`, 'success');

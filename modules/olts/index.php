@@ -4,57 +4,50 @@ require_once __DIR__ . '/../../includes/helpers.php';
 Auth::check();
 $db = Database::getInstance();
 
-handleDelete('olts', [
-    // Desvincula clientes e CTOs dos olt_pons desta OLT antes do CASCADE apagá-los
-    ['sql' => 'UPDATE clientes SET olt_pon_id = NULL WHERE olt_pon_id IN (SELECT id FROM olt_pons WHERE olt_id = ?)', 'params' => [':id']],
-    ['sql' => 'UPDATE ctos SET olt_pon_id = NULL WHERE olt_pon_id IN (SELECT id FROM olt_pons WHERE olt_id = ?)',     'params' => [':id']],
-]);
+// Inclui o cabeçalho oficial do sistema para trazer os estilos visuais
+include __DIR__ . '/../../includes/header.php';
 
-$pageTitle = 'OLTs';
-$activePage = 'olts';
-require_once __DIR__ . '/../../includes/header.php';
-
-$search = $_GET['q'] ?? '';
-$sql = "SELECT o.*,
-    (SELECT COUNT(*) FROM olt_pons op WHERE op.olt_id = o.id) as total_pons,
-    (SELECT COUNT(*) FROM olt_pons op JOIN clientes cl ON cl.olt_pon_id = op.id WHERE op.olt_id = o.id AND cl.status='ativo') as clientes_ativos
-    FROM olts o WHERE 1=1";
-$params = [];
-if ($search) { $sql .= " AND (o.nome LIKE ? OR o.ip_gerencia LIKE ? OR o.fabricante LIKE ?)"; $params = ["%$search%","%$search%","%$search%"]; }
-$sql .= " ORDER BY o.nome ASC";
-$olts = $db->fetchAll($sql, $params);
+// Busca as OLTs cadastradas no sistema
+$olts = $db->fetchAll("SELECT * FROM olts ORDER BY nome ASC");
 ?>
 <div class="page-content">
-<?php pageHeader('OLTs','fa-server','#ff6600',count($olts),'OLTs cadastradas',
-    BASE_URL.'/modules/olts/edit.php','Nova OLT');
+<?php pageHeader('OLTs / Chassis', 'fa-server', '#ff3333', count($olts), 'OLTs cadastradas', BASE_URL.'/modules/olts/edit.php', 'Nova OLT', '', '<a href="'.BASE_URL.'/dashboard.php" class="btn btn-secondary"><i class="fas fa-map"></i> Ver no Mapa</a>'); 
 flashMessages(); ?>
+
 <?php tableOpen() ?>
-    <thead><tr>
-        <th>Nome</th><th>IP Gerência</th><th>Fabricante</th><th>Modelo</th>
-        <th>PONs</th><th>Clientes Ativos</th><th>Status</th><th>Ações</th>
-    </tr></thead>
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Nome do Chassi / OLT</th>
+            <th>Status</th>
+            <th style="width:150px; text-align:center">Ações</th>
+        </tr>
+    </thead>
     <tbody>
     <?php if (empty($olts)): ?>
-    <tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text-muted)">
-        <i class="fas fa-server" style="font-size:32px;display:block;opacity:0.3;margin-bottom:10px"></i>Nenhuma OLT cadastrada</td></tr>
+        <tr><td colspan="4" class="text-center">Nenhuma OLT cadastrada.</td></tr>
+    <?php else: ?>
+        <?php foreach ($olts as $o): ?>
+        <tr>
+            <td><?= $o['id'] ?></td>
+            <td><strong><?= e($o['nome']) ?></strong></td>
+            <td><?= formatStatus($o['status'] ?? 'ativo') ?></td>
+            <td>
+                <div style="display:flex; gap:6px; justify-content:center">
+                    <a href="<?= BASE_URL ?>/modules/olts/view.php?id=<?= $o['id'] ?>" class="btn btn-icon btn-secondary" title="Ver Portas PON"><i class="fas fa-eye"></i></a>
+                    <a href="<?= BASE_URL ?>/modules/olts/edit.php?id=<?= $o['id'] ?>" class="btn btn-icon btn-primary" title="Editar OLT"><i class="fas fa-edit"></i></a>
+                    
+                    <!-- Lixeira Única e Funcional Corrigida -->
+                    <button class="btn btn-icon btn-danger" title="Excluir OLT" onclick="if(confirm('Deseja excluir definitivamente esta OLT e todas as suas portas PON?')) { fetch('../../api/elements.php?type=delete_olt&id=<?php echo $o['id']; ?>', {method:'DELETE'}).then(r=>r.json()).then(res=>{ if(res.success) { alert('OLT removida com sucesso!'); window.location.reload(); } else { alert(res.error || 'Erro ao excluir'); } }); }"><i class="fas fa-trash"></i></button>
+                </div>
+            </td>
+        </tr>
+        <?php endforeach; ?>
     <?php endif; ?>
-    <?php foreach ($olts as $o): ?>
-    <tr>
-        <td><strong><?= e($o['nome']) ?></strong></td>
-        <td style="font-family:monospace;font-size:13px"><?= e($o['ip_gerencia']?:'—') ?></td>
-        <td><?= e($o['fabricante']?:'—') ?></td>
-        <td><?= e($o['modelo']?:'—') ?></td>
-        <td><?= $o['total_pons'] ?></td>
-        <td><?= $o['clientes_ativos'] ?></td>
-        <td><?= formatStatus($o['status']) ?></td>
-        <td><div style="display:flex;gap:6px">
-            <a href="<?= BASE_URL ?>/modules/olts/view.php?id=<?= $o['id'] ?>" class="btn btn-icon btn-secondary"><i class="fas fa-eye"></i></a>
-            <a href="<?= BASE_URL ?>/modules/olts/edit.php?id=<?= $o['id'] ?>" class="btn btn-icon btn-primary"><i class="fas fa-edit"></i></a>
-            <?php deleteButton($o['id'], 'Remover OLT e todas as suas PONs?') ?>
-        </div></td>
-    </tr>
-    <?php endforeach; ?>
     </tbody>
 <?php tableClose() ?>
 </div>
-<?php require_once __DIR__ . '/../../includes/footer.php'; ?>
+<?php 
+// Inclui o rodapé oficial do sistema para fechar as tags HTML
+include __DIR__ . '/../../includes/footer.php'; 
+?>

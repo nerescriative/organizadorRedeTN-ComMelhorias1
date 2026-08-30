@@ -44,7 +44,7 @@ flashMessages(); ?>
             <a href="<?= BASE_URL ?>/modules/ceos/view.php?id=<?= $c['id'] ?>" class="btn btn-icon btn-secondary" title="Ver"><i class="fas fa-eye"></i></a>
             <a href="<?= BASE_URL ?>/modules/fusoes/view.php?ceo_id=<?= $c['id'] ?>" class="btn btn-icon" style="background:rgba(153,51,255,.15);color:#9933ff;border:1px solid rgba(153,51,255,.3)" title="Mapa de Fusões"><i class="fas fa-sitemap"></i></a>
             <a href="<?= BASE_URL ?>/modules/ceos/edit.php?id=<?= $c['id'] ?>" class="btn btn-icon btn-primary" title="Editar"><i class="fas fa-edit"></i></a>
-            <?php deleteButton($c['id'], 'Remover CEO?') ?>
+            <button class="btn btn-icon btn-danger" title="Excluir" onclick="if(confirm('Tem certeza que deseja excluir definitivamente este registro?')) fetch('../../api/elements.php?type=delete_ceo&id=<?= ['id'] ?>', {method:'DELETE'}).then(r=>r.json()).then(res=>{ if(res.success) window.location.reload(); else alert(res.error || 'Erro ao excluir'); })"><i class="fas fa-trash"></i></button>
         </div></td>
     </tr>
     <?php endforeach; ?>

@@ -52,7 +52,7 @@ flashMessages(); ?>
         <td><div style="display:flex;gap:6px">
             <a href="<?= BASE_URL ?>/modules/clientes/view.php?id=<?= $cl['id'] ?>" class="btn btn-icon btn-secondary"><i class="fas fa-eye"></i></a>
             <a href="<?= BASE_URL ?>/modules/clientes/edit.php?id=<?= $cl['id'] ?>" class="btn btn-icon btn-primary"><i class="fas fa-edit"></i></a>
-            <?php deleteButton($cl['id'], 'Remover cliente?') ?>
+            <button class="btn btn-icon btn-danger" title="Excluir" onclick="if(confirm('Tem certeza que deseja excluir definitivamente este registro?')) fetch('../../api/elements.php?type=delete_cliente&id=<?= ['id'] ?>', {method:'DELETE'}).then(r=>r.json()).then(res=>{ if(res.success) window.location.reload(); else alert(res.error || 'Erro ao excluir'); })"><i class="fas fa-trash"></i></button>
         </div></td>
     </tr>
     <?php endforeach; ?>

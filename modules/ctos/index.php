@@ -59,7 +59,7 @@ flashMessages(); ?>
         <td><div style="display:flex;gap:6px">
             <a href="<?= BASE_URL ?>/modules/ctos/view.php?id=<?= $c['id'] ?>" class="btn btn-icon btn-secondary"><i class="fas fa-eye"></i></a>
             <a href="<?= BASE_URL ?>/modules/ctos/edit.php?id=<?= $c['id'] ?>" class="btn btn-icon btn-primary"><i class="fas fa-edit"></i></a>
-            <?php deleteButton($c['id'], 'Remover CTO?') ?>
+            <button class="btn btn-icon btn-danger" title="Excluir" onclick="if(confirm('Tem certeza que deseja excluir definitivamente este registro?')) fetch('../../api/elements.php?type=delete_cto&id=<?= ['id'] ?>', {method:'DELETE'}).then(r=>r.json()).then(res=>{ if(res.success) window.location.reload(); else alert(res.error || 'Erro ao excluir'); })"><i class="fas fa-trash"></i></button>
         </div></td>
     </tr>
     <?php endforeach; ?>

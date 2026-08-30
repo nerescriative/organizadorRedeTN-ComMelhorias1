@@ -42,7 +42,7 @@ flashMessages(); ?>
         <td><?= e($s['poste_codigo']?:'—') ?></td>
         <td><div style="display:flex;gap:6px">
             <a href="<?= BASE_URL ?>/modules/splitters/edit.php?id=<?= $s['id'] ?>" class="btn btn-icon btn-primary"><i class="fas fa-edit"></i></a>
-            <?php deleteButton($s['id'], 'Remover splitter?') ?>
+            <button class="btn btn-icon btn-danger" title="Excluir" onclick="if(confirm('Tem certeza que deseja excluir definitivamente este registro?')) fetch('../../api/elements.php?type=delete_splitter&id=<?= ['id'] ?>', {method:'DELETE'}).then(r=>r.json()).then(res=>{ if(res.success) window.location.reload(); else alert(res.error || 'Erro ao excluir'); })"><i class="fas fa-trash"></i></button>
         </div></td>
     </tr>
     <?php endforeach; ?>

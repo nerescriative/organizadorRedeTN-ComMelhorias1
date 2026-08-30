@@ -22,8 +22,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_map_config'])) {
 $cfg = $db->fetchAll("SELECT chave, valor FROM configuracoes WHERE chave LIKE 'mapa_%'");
 $mapaConfig = [];
 foreach ($cfg as $c) { $mapaConfig[$c['chave']] = $c['valor']; }
-$mapaLat  = (float)($mapaConfig['mapa_lat']  ?? -15.82043578);
-$mapaLng  = (float)($mapaConfig['mapa_lng']  ?? -48.1330508);
+$mapaLat  = (float)($mapaConfig['mapa_lat']  ?? -27.5954);
+$mapaLng  = (float)($mapaConfig['mapa_lng']  ?? -48.5480);
 $mapaZoom = (int)  ($mapaConfig['mapa_zoom'] ?? 14);
 $mapaTile =        ($mapaConfig['mapa_tile'] ?? 'street');
 
@@ -147,8 +147,7 @@ $ctoPortasLivres = $ctoPortasTotal - $ctoPortasUsadas;
                 <span class="layer-dot" style="background:#cc8800"></span>
                 <span class="layer-label">Racks</span>
             </label>
-                <label class="layer-item"><input type="checkbox" checked onchange="toggleLayer('racks', this.checked)"> <i class="fas fa-server" style="color:#ff3333"></i> Centrais / OLTs</label>
-</div><!-- /layers-body -->
+            </div><!-- /layers-body -->
         </div>
 
         <!-- Filtro PON -->
@@ -188,7 +187,6 @@ $ctoPortasLivres = $ctoPortasTotal - $ctoPortasUsadas;
             <i class="fas fa-mouse-pointer"></i>
             <span class="tool-tooltip">Selecionar</span>
         </div>
-        <div class="tool-btn" id="tool-rack" onclick="setTool('rack')" title="Adicionar Central / Rack"><i class="fas fa-server" style="color:#ff3333"></i><span class="tool-tooltip">Nova Central</span></div>
         <div class="tool-btn" id="tool-poste" onclick="toggleBatchPoste()" title="">
             <svg width="14" height="24" viewBox="0 0 22 48" style="display:block"><rect x="9" y="6" width="4" height="38" rx="2" fill="currentColor"/><rect x="4" y="6" width="14" height="3" rx="1.5" fill="currentColor"/><circle cx="5" cy="6" r="2.5" fill="#ffee44"/><circle cx="17" cy="6" r="2.5" fill="#ffee44"/></svg>
             <span class="tool-tooltip">Adicionar Postes (clique múltiplo)</span>
@@ -295,41 +293,6 @@ $ctoPortasLivres = $ctoPortasTotal - $ctoPortasUsadas;
             <button class="btn-float-action btn-float-ok" onclick="finalizarTracadoCabo()" title="Finalizar traçado"><i class="fas fa-check"></i> Finalizar</button>
             <button class="btn-float-action btn-float-cancel" onclick="cancelarCabo()" title="Cancelar"><i class="fas fa-times"></i></button>
         </div>
-    </div>
-</div>
-
-<!-- Modal: Adicionar Rack / Central -->
-<div class="modal-overlay" id="modal-rack">
-    <div class="modal">
-        <div class="modal-header">
-            <i class="fas fa-server" style="color:#ff3333"></i>
-            <h3>Nova Central / POP</h3>
-            <div class="modal-close" onclick="closeModal('modal-rack')"><i class="fas fa-times"></i></div>
-        </div>
-        <form id="form-rack" onsubmit="saveElement(event,'rack')">
-        <div class="modal-body">
-            <div class="form-grid">
-                <div class="form-group">
-                    <label class="form-label">Código *</label>
-                    <input class="form-control" name="codigo" required placeholder="ex: POP-01">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Nome Central *</label>
-                    <input class="form-control" name="nome" required placeholder="ex: Central Sol Nascente">
-                </div>
-                <input type="hidden" name="lat" id="rack-lat">
-                <input type="hidden" name="lng" id="rack-lng">
-                <div class="form-group full">
-                    <label class="form-label">Localização / Endereço</label>
-                    <input class="form-control" name="localizacao" placeholder="Rua, Bairro ou Prédio">
-                </div>
-            </div>
-        </div>
-        <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" onclick="closeModal('modal-rack')">Cancelar</button>
-            <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Salvar Central</button>
-        </div>
-        </form>
     </div>
 </div>
 
@@ -820,7 +783,7 @@ $ctoPortasLivres = $ctoPortasTotal - $ctoPortasUsadas;
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<!-- Google Maps Removido -->
+<script src="https://maps.googleapis.com/maps/api/js?key=<?= GOOGLE_MAPS_KEY ?>"></script>
 <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@latest/dist/Leaflet.GoogleMutant.js"></script>
 <script>
 // ===================================================

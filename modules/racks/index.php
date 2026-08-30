@@ -49,6 +49,7 @@ flashMessages(); ?>
             <a href="<?= BASE_URL ?>/modules/racks/view.php?id=<?= $r['id'] ?>" class="btn btn-icon btn-secondary" title="Visualizar"><i class="fas fa-eye"></i></a>
             <a href="<?= BASE_URL ?>/modules/racks/fusao.php?id=<?= $r['id'] ?>" class="btn btn-icon" style="background:rgba(170,102,0,.2);color:#cc8800;border:1px solid rgba(170,102,0,.3)" title="Mapa de Conexões"><i class="fas fa-project-diagram"></i></a>
             <a href="<?= BASE_URL ?>/modules/racks/edit.php?id=<?= $r['id'] ?>" class="btn btn-icon btn-primary" title="Editar"><i class="fas fa-edit"></i></a>
+            <button class="btn btn-icon btn-danger" title="Excluir" onclick="if(confirm('Deseja excluir definitivamente este registro e todos os vinculos?')) fetch('../../api/elements.php?type=delete_rack&id=<?= ['id'] ?? ['id'] ?>', {method:'DELETE'}).then(r=>r.json()).then(res=>{ if(res.success) window.location.reload(); else alert(res.error || 'Erro ao excluir'); })"><i class="fas fa-trash"></i></button>
             <?php deleteButton($r['id'], 'Remover rack "'.$r['codigo'].'" e todos os seus dados?') ?>
         </div></td>
     </tr>
